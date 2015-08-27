@@ -19,7 +19,7 @@ void *_pcap_lib_handle = dlopen("libpcap.so", RTLD_LAZY);
 set_immediate_fn set_immediate_mode =
         (set_immediate_fn)(dlsym(_pcap_lib_handle, "pcap_set_immediate_mode"));
 
-void pcap_init(const char* interfaceName, const char* filter, pcap_info* pcapInfo) {
+void initialize_pcap(const char* interfaceName, const char* filter, pcap_info* pcapInfo) {
     char errbuf[PCAP_ERRBUF_SIZE];
     struct bpf_program fp;
 
@@ -72,6 +72,6 @@ void pcap_init(const char* interfaceName, const char* filter, pcap_info* pcapInf
     pcap_freecode(&fp);
 };
 
-void pcap_dispose(pcap_info* pcapInfo) {
+void stop_pcap(pcap_info* pcapInfo) {
     pcap_close(pcapInfo->handle);
 }

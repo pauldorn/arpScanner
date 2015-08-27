@@ -14,7 +14,7 @@ typedef struct {
 } pcap_info;
 
 
-void pcap_init(const char* interfaceNamem, const char* filter, pcap_info* pcapInfo);
-void pcap_dispose(pcap_info* pcapInfo);
+void initialize_pcap(const char* interfaceName, const char* filter, pcap_info* pcapInfo);
+void stop_pcap(pcap_info* pcapInfo);
 
 #endif //ARPSCANNER_PCAP_UTILS_H
