@@ -7,6 +7,17 @@
 #include <iostream>
 #include "PCap.h"
 #include "scan_error.h"
+#include <dlfcn.h>
+// Without immediate mode some architectures (e.g. Linux with TPACKET_V3)
+// will buffer replies and potentially cause a *long* delay in packet
+// reception
+
+// pcap_set_immediate_mode is new as of libpcap 1.5.1, so we check for
+// this new method dynamically ...
+typedef void* (*set_immediate_fn)(pcap_t *p, int immediate);
+void *_pcap_lib_handle = dlopen("libpcap.so", RTLD_LAZY);
+set_immediate_fn set_immediate_mode =
+        (set_immediate_fn)(dlsym(_pcap_lib_handle, "pcap_set_immediate_mode"));
 
 using namespace std;
 
