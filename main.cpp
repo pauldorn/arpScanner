@@ -1,9 +1,10 @@
 #include <iostream>
 #include <assert.h>
 #include <uv.h>
-#include <string>
 #include <pcap/pcap.h>
 #include <dlfcn.h>
+#include "arp.h"
+
 // Without immediate mode some architectures (e.g. Linux with TPACKET_V3)
 // will buffer replies and potentially cause a *long* delay in packet
 // reception
@@ -27,12 +28,14 @@ void packet_parser(u_char *user, const struct pcap_pkthdr *h, const u_char *byte
     int offset = 0, i;
     char dstmac[12];
     char srcmac[12];
+    char ipResponder[16];
+    char outb[12];
     char *buf_ptr;
     int type;
     v_lan_info vlan;
     int length;
 
-    cout << "Parsing packet" << endl;
+//    cout << "Parsing packet" << endl;
 
     // 32-bit Destination MAC Address
     buf_ptr = dstmac;
@@ -68,19 +71,72 @@ void packet_parser(u_char *user, const struct pcap_pkthdr *h, const u_char *byte
     // Determine type
     if (type == 2054) {
         // ARP
+        buf_ptr = ipResponder;
+        for (i = 0; i < 4; ++i) {
+            buf_ptr += sprintf(buf_ptr, "%d.", bytes[offset + 14 + i]);
+        }
+//        macSender = mac.toString(captureBuffer.slice(ret.offset + 8, ret.offset + 8 + 6)),
+//                ipSender = JSON.parse(JSON.stringify(captureBuffer.slice(ret.offset + 14, ret.offset + 14 + 4))).join('.');
+
         int opcode = (bytes[offset+6] << 8) | bytes[offset + 7];
         if (opcode == 2) {
-            cout << "Found ARP Reply" << endl;
+            cout << "Found ARP Reply: " << srcmac << ":::" <<  ipResponder << endl;
         }
     }
+
 }
+
+
+
+u_char ipRangeStart[] = { 192, 168, 211, 1 };
+uint32_t ipRangeLength = 254;
+
+char arp_packet[42];
+pcap_t* pcap_handle;
+
+void timer_cb(uv_timer_t* timer_handle) {
+//    cout << "Timer was called" << endl;
+    uv_stop(uv_default_loop());
+}
+
+void range_iteration_cb(uv_timer_t* rangeTimer) {
+    uint32_t i;
+    u_char localMac[6] = { 0x00, 0x14, 0xd1, 0x26, 0x75, 0x84 };
+
+    if((uint64_t)(rangeTimer->data) == 0 ) {
+        initArpTemplate(arp_packet);
+    }
+
+    for(i=0; i < 10 && (uint64_t)(rangeTimer->data) <= ipRangeLength; i++) {
+        fillArpTemplate(arp_packet, (char*)localMac, (char*)ipRangeStart);
+        pcap_sendpacket(pcap_handle, (u_char*)arp_packet, sizeof(arp_packet));
+        rangeTimer->data = (void*)(((uint64_t)rangeTimer->data) + 1);
+        ipRangeStart[3] ++;
+        if(ipRangeStart[3] == 0) {
+            ipRangeStart[2] ++;
+            if(ipRangeStart[2] == 0) {
+                ipRangeStart[1] ++;
+                if(ipRangeStart[1] == 0) {
+                    ipRangeStart[0] ++ ;
+                }
+            }
+        }
+    }
+
+    if ((uint64_t)(rangeTimer->data) > ipRangeLength) {
+        uv_timer_stop(rangeTimer);
+        uv_timer_start(rangeTimer, timer_cb, 1000, 0);
+    }
+
+}
+
 
 struct pcap_data_t {
     pcap_t* cap_handle;
 } ;
 
 void cb_packets(uv_poll_t* async, int status, int event) {
-    cout << "Got called" << endl;
+//    cout << "Got called" << endl;
     pcap_data_t *pcap_data = (pcap_data_t*)async->data;
     int packet_count;
 
@@ -88,10 +144,7 @@ void cb_packets(uv_poll_t* async, int status, int event) {
         packet_count = pcap_dispatch(pcap_data->cap_handle, 1, packet_parser, (u_char*) pcap_data);
     } while (packet_count > 0);
 }
-void timer_cb(uv_timer_t* timer_handle) {
-    cout << "Timer was called" << endl;
-    uv_stop(uv_default_loop());
-}
+
 
 void exit_with_error(const char* errbuf) {
     printf("%s", errbuf);
@@ -118,7 +171,7 @@ int main(int argc, const char* argv[]) {
         fprintf(stderr, "Warning: %s - This may not actually work\n", errbuf);
     }
     // Initialize PCAP
-    pcap_t* pcap_handle = pcap_create((char*)argv[1], errbuf);
+    pcap_handle = pcap_create((char*)argv[1], errbuf);
 
     if (pcap_handle == NULL)
         exit_with_error(errbuf);
@@ -176,9 +229,11 @@ int main(int argc, const char* argv[]) {
 
     uv_timer_init(loop_handle_ptr, &send_timer);
     // send packets every ten msecs (warning, this is 10 seconds between STARTS)
-    uv_timer_start(&send_timer, timer_cb, 60000, 0);
+    send_timer.data = (void*)0;
 
-    cout << "Entering event loop" << endl;
+    uv_timer_start(&send_timer, range_iteration_cb, 10, 10);
+
+//    cout << "Entering event loop" << endl;
     uv_run(uv_default_loop(), UV_RUN_DEFAULT);
     return 0;
 }
