@@ -6,14 +6,61 @@
 #include <assert.h>
 #include <iostream>
 #include "PCap.h"
-#include "pcap_utils.h"
+#include "scan_error.h"
 
 using namespace std;
 
 PCap::PCap(const char* interfaceName, const char* filter) {
-    initialize_pcap(interfaceName, filter, &pcapInfo);
-    // Start listening on
-    Start();
+    char errbuf[PCAP_ERRBUF_SIZE];
+    struct bpf_program fp;
+
+    if (pcap_lookupnet(interfaceName, &pcapInfo.net, &pcapInfo.mask, errbuf) == -1) {
+        pcapInfo.net = 0;
+        pcapInfo.mask = 0;
+        fprintf(stderr, "Warning: %s - This may not actually work\n", errbuf);
+    }
+    // Initialize PCAP
+    pcapInfo.handle = pcap_create((char *) interfaceName, errbuf);
+
+    if (pcapInfo.handle == NULL)
+        exit_with_error(errbuf);
+
+    // 64KB is the max IPv4 packet size
+    if (pcap_set_snaplen(pcapInfo.handle, 65535) != 0)
+        exit_with_error("Unable to set snaplen");
+
+    // Always use promiscuous mode
+    if (pcap_set_promisc(pcapInfo.handle, 1) != 0)
+        exit_with_error("Unable to set promiscuous mode");
+
+    // Try to set buffer size. Sometimes the OS has a lower limit that it will
+    // silently enforce.arpCap->addPacketProcesor()
+    if (pcap_set_buffer_size(pcapInfo.handle, RING_BUFFER_SIZE) != 0)
+        exit_with_error("Unable to set buffer size");
+
+    // Set "timeout" on read, even though we are also setting nonblock below.
+    // On Linux this is required.
+    if (pcap_set_timeout(pcapInfo.handle, 1000) != 0)
+        exit_with_error("Unable to set read timeout");
+
+#if __linux__
+    if (set_immediate_mode != NULL)
+        set_immediate_mode(pcapInfo.handle, 1);
+#endif
+
+    if (pcap_activate(pcapInfo.handle) != 0)
+        exit_with_error(pcap_geterr(pcapInfo.handle));
+
+    if (pcap_setnonblock(pcapInfo.handle, 1, errbuf) == -1)
+        exit_with_error(errbuf);
+
+    if (pcap_compile(pcapInfo.handle, &fp, filter, 1, pcapInfo.net) == -1)
+        exit_with_error(pcap_geterr(pcapInfo.handle));
+
+    if (pcap_setfilter(pcapInfo.handle, &fp) == -1)
+        exit_with_error(pcap_geterr(pcapInfo.handle));
+
+    pcap_freecode(&fp);
 };
 
 void PCap::packetParser(const struct pcap_pkthdr *h, const u_char *bytes) {
@@ -67,6 +114,7 @@ void PCap::packetParser(const struct pcap_pkthdr *h, const u_char *bytes) {
         }
     }
 }
+
 void PCap::packetDispatch(u_char *user, const struct pcap_pkthdr *h, const u_char *bytes) {
     PCap* pcap = (PCap*) user;
     pcap->packetParser(h, bytes);
@@ -84,7 +132,7 @@ void PCap::packetHandler(uv_poll_t* handle, int status, int event) {
     } while (packet_count > 0);
 }
 
-void PCap::Start() {
+void PCap::Start(uv_loop_t* uv_loop) {
     // So in theory PCAP is listening on the interface in argv[1]
     int fd = pcap_get_selectable_fd(pcapInfo.handle);
     int r;
@@ -93,7 +141,7 @@ void PCap::Start() {
     // the data field on poll_handle is our "friend". Make it this.
     pollHandle.data = (void*) this;
 
-    r = uv_poll_init(uv_default_loop(), &pollHandle, fd);
+    r = uv_poll_init(uv_loop, &pollHandle, fd);
     assert(r == 0);
     r = uv_poll_start(&pollHandle, UV_READABLE, PCap::packetHandler);
     assert(r == 0);
@@ -104,5 +152,5 @@ PCap::~PCap() {
     Stop();
 }
 void PCap::Stop() {
-    stop_pcap(&pcapInfo);
+    uv_poll_stop(&pollHandle);
 };

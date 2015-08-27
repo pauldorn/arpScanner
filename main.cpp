@@ -1,7 +1,5 @@
 #include <iostream>
-#include <assert.h>
 #include <uv.h>
-
 #include "PCap.h"
 
 using namespace std;
@@ -34,7 +32,7 @@ int main(int argc, const char* argv[]) {
     const char* arp_filter = "arp or (vlan and arp)";
     PCap* arpCap = new PCap(argv[1], arp_filter);
 
-    arpCap->addPacketProcesor()
+
 //    uv_timer_init(loop_handle_ptr, &send_timer);
 //
 //    uv_timer_start(&send_timer, timer_cb, 60000, 0);
@@ -43,6 +41,9 @@ int main(int argc, const char* argv[]) {
 
     // Process messages indefinitely, yielding unused time back to kernel
     uv_run(uv_default_loop(), UV_RUN_DEFAULT);
+
+    // Start listening on
+    arpCap->Start(uv_default_loop());
 
     cout << "Exiting" << endl;
     // We got here, so we know we are done.
